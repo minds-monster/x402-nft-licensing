@@ -1,28 +1,33 @@
 const express = require('express');
 const { Network, Alchemy } = require('alchemy-sdk');
 const { createPublicClient, http } = require('viem');
-const { base } = require('viem/chains');
+const { base, baseSepolia } = require('viem/chains');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
 // Configuration
-const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS || '0xPlaceholderAddress...';
 // 0.0001 ETH placeholder
 const REQUIRED_AMOUNT_WEI = process.env.REQUIRED_AMOUNT_WEI || '100000000000000'; 
 
-// Alchemy configuration for Base Mainnet
+const isTest = process.env.IS_TEST === 'true';
+
+// Alchemy configuration
 const settings = {
   apiKey: process.env.ALCHEMY_API_KEY || 'demo', 
-  network: Network.BASE_MAINNET,
+  network: isTest ? Network.BASE_SEPOLIA : Network.BASE_MAINNET,
 };
 const alchemy = new Alchemy(settings);
 
 // Viem public client for Base network to verify transactions
 const viemClient = createPublicClient({
-  chain: base,
-  transport: http(process.env.BASE_RPC_URL || 'https://mainnet.base.org')
+  chain: isTest ? baseSepolia : base,
+  transport: http(
+    isTest 
+      ? (process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org') 
+      : (process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org')
+  )
 });
 
 // In-memory store to prevent transaction replay attacks
@@ -36,6 +41,23 @@ const usedTransactions = new Set();
  */
 async function x402Middleware(req, res, next) {
   const txHash = req.headers['x-payment-tx'];
+  const { contractAddress, tokenId } = req.params;
+
+  let paymentAddress;
+  if (contractAddress && tokenId) {
+    try {
+      const ownersResponse = await alchemy.nft.getOwnersForNft(contractAddress, tokenId);
+      paymentAddress = ownersResponse.owners[0];
+      if (!paymentAddress) {
+        return res.status(404).json({ error: 'NFT owner not found' });
+      }
+    } catch (error) {
+      console.error('Failed to get NFT owner:', error);
+      return res.status(500).json({ error: 'Failed to retrieve payment address' });
+    }
+  } else {
+    return res.status(500).json({ error: 'Payment address cannot be determined for this route' });
+  }
 
   if (!txHash) {
     // Standard X402 / HTTP 402 Payment Required Response
@@ -45,7 +67,7 @@ async function x402Middleware(req, res, next) {
         network: 'base',
         token: 'ETH',
         amount: REQUIRED_AMOUNT_WEI,
-        recipient: PAYMENT_ADDRESS,
+        recipient: paymentAddress,
         instruction: 'Please send the required amount to the recipient address on Base and include the transaction hash in the X-Payment-Tx header.'
       }
     });
@@ -70,7 +92,7 @@ async function x402Middleware(req, res, next) {
     }
 
     // 3. Verify recipient
-    if (transaction.to.toLowerCase() !== PAYMENT_ADDRESS.toLowerCase()) {
+    if (transaction.to.toLowerCase() !== paymentAddress.toLowerCase()) {
       return res.status(400).json({ error: 'Invalid payment recipient' });
     }
 
@@ -169,6 +191,6 @@ if (require.main === module) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-    console.log(`Payment required: ${REQUIRED_AMOUNT_WEI} wei to ${PAYMENT_ADDRESS}`);
+    console.log(`Payment required: ${REQUIRED_AMOUNT_WEI} wei to the NFT owner`);
   });
 }

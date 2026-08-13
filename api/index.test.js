@@ -1,5 +1,4 @@
-process.env.PAYMENT_ADDRESS = '0x1234';
-process.env.REQUIRED_AMOUNT_WEI = '100';
+process.env.REQUIRED_AMOUNT_WEI = '1';
 
 const request = require('supertest');
 const app = require('./index');
@@ -21,7 +20,8 @@ jest.mock('alchemy-sdk', () => {
   const mockNft = {
     getNftMetadata: jest.fn(),
     getNftsForOwner: jest.fn(),
-    getNftsForContract: jest.fn()
+    getNftsForContract: jest.fn(),
+    getOwnersForNft: jest.fn()
   };
   return {
     Alchemy: jest.fn().mockImplementation(() => ({ nft: mockNft })),
@@ -43,8 +43,10 @@ describe('API Endpoints', () => {
     jest.clearAllMocks();
     
     // Set standard environment variables for tests
-    process.env.PAYMENT_ADDRESS = '0x1234';
-    process.env.REQUIRED_AMOUNT_WEI = '100';
+    process.env.REQUIRED_AMOUNT_WEI = '1';
+
+    // Mock NFT owner to be '0x1234'
+    alchemyNft.getOwnersForNft.mockResolvedValue({ owners: ['0x1234'] });
   });
 
   describe('GET /api/nft/search', () => {
@@ -83,7 +85,7 @@ describe('API Endpoints', () => {
     });
 
     it('should return 400 if payment recipient is invalid', async () => {
-      viemClient.getTransaction.mockResolvedValue({ to: '0xwrong', value: BigInt('100') });
+      viemClient.getTransaction.mockResolvedValue({ to: '0xwrong', value: BigInt('1') });
       viemClient.getTransactionReceipt.mockResolvedValue({ status: 'success' });
 
       const response = await request(app)
@@ -95,7 +97,7 @@ describe('API Endpoints', () => {
     });
 
     it('should return 400 if payment amount is insufficient', async () => {
-      viemClient.getTransaction.mockResolvedValue({ to: '0x1234', value: BigInt('50') }); // 50 < 100
+      viemClient.getTransaction.mockResolvedValue({ to: '0x1234', value: BigInt('0') }); // 0 < 1
       viemClient.getTransactionReceipt.mockResolvedValue({ status: 'success' });
 
       const response = await request(app)
@@ -107,7 +109,7 @@ describe('API Endpoints', () => {
     });
 
     it('should return 200 and NFT metadata if payment is valid', async () => {
-      viemClient.getTransaction.mockResolvedValue({ to: '0x1234', value: BigInt('100') });
+      viemClient.getTransaction.mockResolvedValue({ to: '0x1234', value: BigInt('1') });
       viemClient.getTransactionReceipt.mockResolvedValue({ status: 'success' });
 
       alchemyNft.getNftMetadata.mockResolvedValue({
